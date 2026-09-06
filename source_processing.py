@@ -122,7 +122,7 @@ def transcribe_audio(audio_path, output_path, model_name="large-v3-turbo", log=p
 def process_source(source_path, output_root, transcribe=True, model_name="large-v3-turbo", log=print):
     """Process one source and return paths created for it."""
     source = Path(source_path)
-    output_dir = Path(output_root) / source.stem
+    output_dir = Path(output_root)
     output_dir.mkdir(parents=True, exist_ok=True)
     suffix = source.suffix.lower()
     artifacts = []

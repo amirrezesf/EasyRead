@@ -254,16 +254,17 @@ def _safe_name(value):
 def _source_artifacts(source, output_root):
     """Return extracted Markdown/TXT artifacts for one source in stable order."""
     source = Path(source)
-    source_dir = Path(output_root) / source.stem
+    output_dir = Path(output_root)
 
-    if not source_dir.exists():
+    if not output_dir.exists():
         return []
 
     return sorted(
         path
-        for path in source_dir.rglob("*")
+        for path in output_dir.iterdir()
         if path.is_file()
         and path.suffix.lower() in {".md", ".txt"}
+        and path.name.startswith(f"{source.stem}_")
     )
 
 

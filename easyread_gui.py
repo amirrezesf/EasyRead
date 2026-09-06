@@ -354,13 +354,13 @@ class EasyReadApp(BaseClass):
 
     def _save_artifacts_to_session(self, source, output_dir, artifacts):
         """Copy generated artifacts into the persistent session workspace."""
-        source_dir = Path(output_dir) / Path(source).stem
-        session_source_dir = self.session_artifacts_dir / Path(source).stem
+        output_dir = Path(output_dir)
+        session_source_dir = self.session_artifacts_dir
         saved = []
         for artifact in artifacts:
             artifact_path = Path(artifact)
             try:
-                relative_path = artifact_path.relative_to(source_dir)
+                relative_path = artifact_path.relative_to(output_dir)
             except ValueError:
                 # Audio/video inputs are returned as artifacts for transcription,
                 # but the original source should not be duplicated in the session.
