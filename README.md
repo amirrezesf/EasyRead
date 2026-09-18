@@ -1,4 +1,4 @@
-﻿# EasyRead
+# EasyRead
 
 EasyRead is a desktop Python application for turning scattered educational
 sources into structured, AI-ready study material. It extracts text, tables,
@@ -19,7 +19,7 @@ The main workflow is:
 4. Choose a study purpose.
 5. Generate a Persian prompt referencing the extracted artifacts.
 6. Upload the generated Markdown, transcript, and prompt files to the LLM of
-	 your choice.
+   your choice.
 
 The project is especially useful for lecture slides with recorded audio,
 course PDFs, Word handouts, and classroom recordings.
