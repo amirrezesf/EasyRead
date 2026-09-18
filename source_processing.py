@@ -15,6 +15,22 @@ _WHISPER_MODELS = {}
 _WHISPER_MODEL_ALIASES = {"large-v3-turbo": "turbo"}
 
 
+def _normalize_whisper_language(language):
+    if language is None:
+        return "auto"
+    normalized = str(language).strip().lower()
+    aliases = {
+        "auto": "auto",
+        "automatic": "auto",
+        "english": "en",
+        "en": "en",
+        "persian": "fa",
+        "farsi": "fa",
+        "fa": "fa",
+    }
+    return aliases.get(normalized, normalized)
+
+
 def _write_text(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -86,7 +102,7 @@ def _extract_pdf(source, output_dir, log):
     return artifacts
 
 
-def transcribe_audio(audio_path, output_path, model_name="large-v3-turbo", log=print):
+def transcribe_audio(audio_path, output_path, model_name="large-v3-turbo", language="fa", log=print):
     """Transcribe an audio file with OpenAI Whisper and write plain text."""
     try:
         import whisper
@@ -97,19 +113,24 @@ def transcribe_audio(audio_path, output_path, model_name="large-v3-turbo", log=p
     whisper_model_name = _WHISPER_MODEL_ALIASES.get(selected_model_name, selected_model_name)
     model = _WHISPER_MODELS.get(whisper_model_name)
     if model is None:
-        log(f"Loading selected Whisper model: {selected_model_name} (OpenAI Whisper key: {whisper_model_name})")
-        model = whisper.load_model(whisper_model_name)
+        log(f"Loading selected Whisper model: {selected_model_name}")
+        model = whisper.load_model(whisper_model_name, device="cuda")
         _WHISPER_MODELS[whisper_model_name] = model
         log(f"Whisper model ready: {selected_model_name}")
     else:
         log(f"Using cached Whisper model: {selected_model_name}")
 
-    log(f"Transcription started: {Path(audio_path).name}")
+    whisper_language = _normalize_whisper_language(language)
+    log(f"Transcription started: {Path(audio_path).name} (language={whisper_language})")
     started_at = time.perf_counter()
-    result = model.transcribe(str(audio_path), verbose=False)
+    transcribe_kwargs = {}
+    if whisper_language != "auto":
+        transcribe_kwargs["language"] = whisper_language
+    result = model.transcribe(str(audio_path), **transcribe_kwargs)
+    segments = result.get("segments", [])
     elapsed_seconds = time.perf_counter() - started_at
-    lines = [line.strip() for line in result.get("text", "").splitlines() if line.strip()]
-    segment_count = len(result.get("segments", []))
+    lines = [segment.get("text", "").strip() for segment in segments if segment.get("text", "").strip()]
+    segment_count = len(segments)
     log(
         f"Transcription finished: {Path(audio_path).name} "
         f"({segment_count} segments, {elapsed_seconds:.1f}s)"
@@ -119,7 +140,7 @@ def transcribe_audio(audio_path, output_path, model_name="large-v3-turbo", log=p
     return output
 
 
-def process_source(source_path, output_root, transcribe=True, model_name="large-v3-turbo", log=print):
+def process_source(source_path, output_root, transcribe=True, model_name="large-v3-turbo", language="fa", log=print):
     """Process one source and return paths created for it."""
     source = Path(source_path)
     output_dir = Path(output_root)
@@ -154,5 +175,5 @@ def process_source(source_path, output_root, transcribe=True, model_name="large-
     if transcribe:
         for audio_path in audio_to_transcribe:
             transcript = output_dir / f"{audio_path.stem}_transcript.txt"
-            artifacts.append(transcribe_audio(audio_path, transcript, model_name=model_name, log=log))
+            artifacts.append(transcribe_audio(audio_path, transcript, model_name=model_name, language=language, log=log))
     return artifacts

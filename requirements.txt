@@ -3,3 +3,4 @@ python-docx
 pypdf
 PyMuPDF
 openai-whisper
+torch==2.11.0

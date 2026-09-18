@@ -46,6 +46,8 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Emu
 
+from convert_emf_and_wmf import vector_to_jpg
+
 
 # ---------- formatting detection ----------
 
@@ -159,11 +161,16 @@ def _table_to_html(table):
 
 def _picture_to_html(shape, slide_idx, img_counter, images_dir, html_out_dir):
     image = shape.image
-    ext = image.ext
+    ext = image.ext.lower()
     filename = f"slide{slide_idx}_img{img_counter}.{ext}"
     filepath = os.path.join(images_dir, filename)
     with open(filepath, "wb") as f:
         f.write(image.blob)
+    if ext in {"emf", "wmf"}:
+        converted_path = os.path.splitext(filepath)[0] + ".jpg"
+        vector_to_jpg(filepath, converted_path)
+        os.remove(filepath)
+        filepath = converted_path
     # path written into the HTML, relative to the HTML file's own directory
     rel_path = os.path.relpath(filepath, html_out_dir)
     return (

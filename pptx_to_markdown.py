@@ -14,6 +14,8 @@ import re
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
+from convert_emf_and_wmf import vector_to_jpg
+
 
 def _run_highlight_rgb(run):
     """python-pptx has no public API for <a:highlight> (text highlight color)."""
@@ -132,11 +134,16 @@ def _table_to_markdown(table):
 
 def _picture_to_markdown(shape, slide_idx, img_counter, images_dir, md_out_dir):
     image = shape.image
-    ext = image.ext
+    ext = image.ext.lower()
     filename = f"slide{slide_idx}_img{img_counter}.{ext}"
     filepath = os.path.join(images_dir, filename)
     with open(filepath, "wb") as f:
         f.write(image.blob)
+    if ext in {"emf", "wmf"}:
+        converted_path = os.path.splitext(filepath)[0] + ".jpg"
+        vector_to_jpg(filepath, converted_path)
+        os.remove(filepath)
+        filepath = converted_path
     rel_path = os.path.relpath(filepath, md_out_dir).replace("\\", "/")
     alt = f"Slide {slide_idx} image {img_counter}"
     return f"![{alt}]({rel_path})"

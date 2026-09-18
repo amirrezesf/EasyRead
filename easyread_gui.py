@@ -86,6 +86,7 @@ class EasyReadApp(BaseClass):
         self.sources = []
         self.output_dir_var = tk.StringVar()
         self.model_var = tk.StringVar(value="large-v3-turbo")
+        self.language_var = tk.StringVar(value="Persian")
         self.prompt_purpose_var = tk.StringVar(value="Night-before exam handout")
         self.transcribe_var = tk.BooleanVar(value=True)
         self._busy = False
@@ -210,6 +211,17 @@ class EasyReadApp(BaseClass):
         )
         model_combo.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
         Tooltip(model_combo, "Whisper model size for transcription")
+
+        ttk.Label(opts, text="Language").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        language_combo = ttk.Combobox(
+            opts,
+            textvariable=self.language_var,
+            width=30,
+            state="readonly",
+            values=["Automatic", "Persian", "English"],
+        )
+        language_combo.grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        Tooltip(language_combo, "Whisper transcription language; choose Automatic for language detection")
 
         # Progress bar
         self.progress = ttk.Progressbar(
@@ -395,6 +407,7 @@ class EasyReadApp(BaseClass):
         out_dir = self.output_dir_var.get().strip()
         transcribe = self.transcribe_var.get()
         model_name = self.model_var.get().strip() or "large-v3-turbo"
+        language = self.language_var.get().strip() or "Persian"
 
         if not sources:
             messagebox.showwarning("Missing sources", "Please add at least one source file.")
@@ -429,7 +442,14 @@ class EasyReadApp(BaseClass):
                 for i, source in enumerate(sources, start=1):
                     self.log(f"\n=== Processing {Path(source).name} ===")
                     try:
-                        artifacts = process_source(source, out_dir, transcribe, model_name, log=self.log)
+                        artifacts = process_source(
+                            source,
+                            out_dir,
+                            transcribe,
+                            model_name,
+                            language=language,
+                            log=self.log,
+                        )
                         for artifact in artifacts:
                             self.log(f"Created: {artifact}")
                         self._save_artifacts_to_session(source, out_dir, artifacts)
