@@ -2,14 +2,14 @@
 
 from pathlib import Path
 import json
-import glob
+from typing import List, Dict, Any, Optional, Callable
 
 
 # ---------------------------------------------------------------------------
 # Purpose-specific configuration
 # ---------------------------------------------------------------------------
 
-PURPOSES = {
+PURPOSES: Dict[str, Dict[str, str]] = {
     "Study guide": {
         "role": (
             "تو یک مدرس و طراح راهنمای مطالعه هستی که باید به دانشجو کمک کنی "
@@ -248,12 +248,12 @@ COMMON_INSTRUCTIONS = """
 # Input handling
 # ---------------------------------------------------------------------------
 
-def _safe_name(value):
+def _safe_name(value: str) -> str:
     """Create a filesystem-safe name from a purpose string."""
     return "_".join(value.lower().split()).replace("/", "-")
 
 
-def _source_artifacts_via_manifest(source, output_root):
+def _source_artifacts_via_manifest(source: Path, output_root: Path) -> List[Path]:
     """Return extracted artifacts using manifest files (preferred method)."""
     source = Path(source)
     output_dir = Path(output_root)
@@ -279,7 +279,7 @@ def _source_artifacts_via_manifest(source, output_root):
     return []
 
 
-def _source_artifacts_legacy(source, output_root):
+def _source_artifacts_legacy(source: Path, output_root: Path) -> List[Path]:
     """Return extracted Markdown/TXT artifacts for one source in stable order (legacy)."""
     source = Path(source)
     output_dir = Path(output_root)
@@ -296,7 +296,7 @@ def _source_artifacts_legacy(source, output_root):
     )
 
 
-def _source_artifacts(source, output_root):
+def _source_artifacts(source: Path, output_root: Path) -> List[Path]:
     """Return extracted artifacts for one source (tries manifest first, falls back to legacy)."""
     artifacts = _source_artifacts_via_manifest(source, output_root)
     if artifacts:
@@ -304,12 +304,12 @@ def _source_artifacts(source, output_root):
     return _source_artifacts_legacy(source, output_root)
 
 
-def _collect_artifact_names(sources, output_root):
+def _collect_artifact_names(sources: List[Path], output_root: Path) -> List[str]:
     """
     Collect artifact filenames in stable order while removing duplicates.
     """
-    artifact_names = []
-    seen = set()
+    artifact_names: List[str] = []
+    seen: set = set()
 
     for source in sources:
         artifacts = _source_artifacts(source, output_root)
@@ -432,7 +432,11 @@ def build_prompt(sources, output_root, purpose):
 # File output
 # ---------------------------------------------------------------------------
 
-def write_prompt(sources, output_root, purpose):
+def write_prompt(
+    sources: List[Path],
+    output_root: Path,
+    purpose: str,
+) -> Path:
     """
     Build and write a purpose-specific prompt to disk.
     """

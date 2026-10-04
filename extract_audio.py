@@ -5,6 +5,7 @@ import re
 import shutil
 from pathlib import Path
 from xml.etree import ElementTree as ET
+from typing import List, Optional, Callable, Any
 
 
 NS = {
@@ -20,7 +21,7 @@ AUDIO_EXTENSIONS = {
 }
 
 
-def _get_ordered_slide_paths(ppt_zip):
+def _get_ordered_slide_paths(ppt_zip: zipfile.ZipFile) -> List[str]:
     """Return list of 'ppt/slides/slideN.xml' paths in actual presentation order."""
     pres_xml = ET.fromstring(ppt_zip.read("ppt/presentation.xml"))
     pres_rels = ET.fromstring(ppt_zip.read("ppt/_rels/presentation.xml.rels"))
@@ -47,7 +48,7 @@ def _get_ordered_slide_paths(ppt_zip):
     return slide_paths
 
 
-def _get_slide_audio_media(ppt_zip, slide_path):
+def _get_slide_audio_media(ppt_zip: zipfile.ZipFile, slide_path: str) -> List[str]:
     """Return list of media paths (ppt/media/...) referenced by a slide, in the
     order they appear in the slide XML (covers timeline/click order better than
     rels file order alone)."""
@@ -108,13 +109,17 @@ def _get_slide_audio_media(ppt_zip, slide_path):
     return media_in_order
 
 
-def _numeric_key(path: Path):
+def _numeric_key(path: Path) -> float:
     """Extract the trailing integer from a filename like 'media23.m4a' -> 23."""
     match = re.search(r"(\d+)", path.stem)
     return int(match.group(1)) if match else float("inf")
 
 
-def extract_audio_to_mp3(powerpoint_file, output_file="combined_audio.mp3", log=print):
+def extract_audio_to_mp3(
+    powerpoint_file: Path,
+    output_file: Path = Path("combined_audio.mp3"),
+    log: Callable[[str], Any] = print,
+) -> Path:
     powerpoint_file = Path(powerpoint_file)
     output_file = Path(output_file)
 
@@ -138,7 +143,7 @@ def extract_audio_to_mp3(powerpoint_file, output_file="combined_audio.mp3", log=
             slide_paths = _get_ordered_slide_paths(ppt_zip)
 
             # Try the "proper" slide-relationship approach first.
-            ordered_audio_media = []
+            ordered_audio_media: List[str] = []
             seen = set()
             for slide_path in slide_paths:
                 for media in _get_slide_audio_media(ppt_zip, slide_path):
@@ -185,57 +190,59 @@ def extract_audio_to_mp3(powerpoint_file, output_file="combined_audio.mp3", log=
                 f.write(f"file '{path}'\n")
 
         # Combine and convert to MP3
-                # Check ffmpeg availability first
-                ffmpeg_path = shutil.which("ffmpeg")
-                if not ffmpeg_path:
-                    raise RuntimeError(
-                        "FFmpeg not found in PATH. Install FFmpeg (https://ffmpeg.org/download.html) "
-                        "and ensure 'ffmpeg' is available on PATH. On Windows: winget install ffmpeg, "
-                        "on Linux: apt install ffmpeg, on macOS: brew install ffmpeg."
-                    )
-        
-                # Also check for libmp3lame encoder
-                probe_result = subprocess.run(
-                    [ffmpeg_path, "-encoders"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                if "libmp3lame" not in probe_result.stdout:
-                    raise RuntimeError(
-                        "FFmpeg found but 'libmp3lame' encoder is missing. "
-                        "Install a full FFmpeg build with MP3 encoding support."
-                    )
+        # Check ffmpeg availability first
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            raise RuntimeError(
+                "FFmpeg not found in PATH. Install FFmpeg (https://ffmpeg.org/download.html) "
+                "and ensure 'ffmpeg' is available on PATH. On Windows: winget install ffmpeg, "
+                "on Linux: apt install ffmpeg, on macOS: brew install ffmpeg."
+            )
 
-                command = [
-                    ffmpeg_path,
-                    "-y",
-                    "-f", "concat",
-                    "-safe", "0",
-                    "-i", str(concat_file),
-                    "-vn",
-                    "-acodec", "libmp3lame",
-                    "-b:a", "192k",
-                    str(output_file)
-                ]
+        # Also check for libmp3lame encoder
+        probe_result = subprocess.run(
+            [ffmpeg_path, "-encoders"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if "libmp3lame" not in probe_result.stdout:
+            raise RuntimeError(
+                "FFmpeg found but 'libmp3lame' encoder is missing. "
+                "Install a full FFmpeg build with MP3 encoding support."
+            )
 
-                log("Combining audio...")
+        command = [
+            ffmpeg_path,
+            "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_file),
+            "-vn",
+            "-acodec", "libmp3lame",
+            "-b:a", "192k",
+            str(output_file)
+        ]
 
-                run_kwargs = {
-                    "stdout": subprocess.PIPE,
-                    "stderr": subprocess.PIPE,
-                    "text": True,
-                }
-                if hasattr(subprocess, "CREATE_NO_WINDOW"):
-                    run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        log("Combining audio...")
 
-                result = subprocess.run(command, **run_kwargs)
+        run_kwargs = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+        }
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-                if result.returncode != 0:
-                    log(result.stderr)
-                    raise RuntimeError("FFmpeg failed to create the MP3.")
+        result = subprocess.run(command, **run_kwargs)
 
-                log(f"Done! Output: {output_file.resolve()}")
+        if result.returncode != 0:
+            log(result.stderr)
+            raise RuntimeError("FFmpeg failed to create the MP3.")
+
+        log(f"Done! Output: {output_file.resolve()}")
+
+    return output_file
 
 
 if __name__ == "__main__":

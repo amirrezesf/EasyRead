@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 import time
 import threading
+from typing import Optional, List, Any, Callable
 
 from extract_audio import extract_audio_to_mp3
 
@@ -18,7 +19,7 @@ _WHISPER_MODELS_LOCK = threading.Lock()
 _WHISPER_MODEL_ALIASES = {"large-v3-turbo": "turbo"}
 
 
-def _load_whisper_model(model_name: str, log=print):
+def _load_whisper_model(model_name: str, log: Callable[[str], Any] = print) -> Any:
     """Thread-safe Whisper model loading with CPU fallback."""
     with _WHISPER_MODELS_LOCK:
         model = _WHISPER_MODELS.get(model_name)
@@ -46,7 +47,7 @@ def _load_whisper_model(model_name: str, log=print):
     return model
 
 
-def _normalize_whisper_language(language):
+def _normalize_whisper_language(language: Optional[str]) -> str:
     if language is None:
         return "auto"
     normalized = str(language).strip().lower()
@@ -62,13 +63,13 @@ def _normalize_whisper_language(language):
     return aliases.get(normalized, normalized)
 
 
-def _write_text(path, text):
+def _write_text(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
 
 
-def _extract_ppt_text(source, output_dir, log):
+def _extract_ppt_text(source: Path, output_dir: Path, log: Callable[[str], Any] = print) -> Path:
     from pptx_to_markdown import convert
 
     output = output_dir / f"{source.stem}_text.md"
@@ -78,7 +79,7 @@ def _extract_ppt_text(source, output_dir, log):
     return output
 
 
-def _extract_docx_text(source, output_dir, log):
+def _extract_docx_text(source: Path, output_dir: Path, log: Callable[[str], Any] = print) -> Path:
     from docx import Document
 
     document = Document(source)
@@ -94,7 +95,7 @@ def _extract_docx_text(source, output_dir, log):
     return output
 
 
-def _extract_pdf(source, output_dir, log):
+def _extract_pdf(source: Path, output_dir: Path, log: Callable[[str], Any] = print) -> List[Path]:
     from pypdf import PdfReader
 
     reader = PdfReader(str(source))
@@ -103,7 +104,7 @@ def _extract_pdf(source, output_dir, log):
     for page_number, page in enumerate(pages, start=1):
         if page:
             lines.extend([f"## Page {page_number}", "", page, ""])
-    artifacts = []
+    artifacts: List[Path] = []
     pages_without_text = [index for index, page in enumerate(pages) if not page]
     has_some_text = any(pages)
     all_blank = not has_some_text
@@ -137,32 +138,39 @@ def _extract_pdf(source, output_dir, log):
     return artifacts
 
 
-def transcribe_audio(audio_path, output_path, model_name="large-v3-turbo", language="fa", log=print, cancel_event=None):
+def transcribe_audio(
+    audio_path: Path,
+    output_path: Path,
+    model_name: str = "large-v3-turbo",
+    language: str = "fa",
+    log: Callable[[str], Any] = print,
+    cancel_event: Optional[threading.Event] = None,
+) -> Optional[Path]:
     """Transcribe an audio file with OpenAI Whisper and write plain text."""
     whisper_model_name = _WHISPER_MODEL_ALIASES.get(model_name, model_name)
     model = _load_whisper_model(whisper_model_name, log=log)
 
     whisper_language = _normalize_whisper_language(language)
-    log(f"Transcription started: {Path(audio_path).name} (language={whisper_language})")
+    log(f"Transcription started: {audio_path.name} (language={whisper_language})")
     started_at = time.perf_counter()
     transcribe_kwargs = {}
     if whisper_language != "auto":
         transcribe_kwargs["language"] = whisper_language
-    
+
     # Whisper doesn't natively support cancellation, but we can check between segments
     result = model.transcribe(str(audio_path), **transcribe_kwargs)
-    
+
     # Check for cancellation after transcription
     if cancel_event and cancel_event.is_set():
         log("Transcription cancelled")
         return None
-    
+
     segments = result.get("segments", [])
     elapsed_seconds = time.perf_counter() - started_at
     lines = [segment.get("text", "").strip() for segment in segments if segment.get("text", "").strip()]
     segment_count = len(segments)
     log(
-        f"Transcription finished: {Path(audio_path).name} "
+        f"Transcription finished: {audio_path.name} "
         f"({segment_count} segments, {elapsed_seconds:.1f}s)"
     )
     output = _write_text(Path(output_path), "\n".join(lines))
@@ -170,14 +178,22 @@ def transcribe_audio(audio_path, output_path, model_name="large-v3-turbo", langu
     return output
 
 
-def process_source(source_path, output_root, transcribe=True, model_name="large-v3-turbo", language="fa", log=print, cancel_event=None):
+def process_source(
+    source_path: Path,
+    output_root: Path,
+    transcribe: bool = True,
+    model_name: str = "large-v3-turbo",
+    language: str = "fa",
+    log: Callable[[str], Any] = print,
+    cancel_event: Optional[threading.Event] = None,
+) -> List[Path]:
     """Process one source and return paths created for it."""
     source = Path(source_path)
     output_dir = Path(output_root)
     output_dir.mkdir(parents=True, exist_ok=True)
     suffix = source.suffix.lower()
-    artifacts = []
-    audio_to_transcribe = []
+    artifacts: List[Path] = []
+    audio_to_transcribe: List[Path] = []
 
     if suffix in POWERPOINT_EXTENSIONS:
         artifacts.append(_extract_ppt_text(source, output_dir, log))
@@ -196,20 +212,20 @@ def process_source(source_path, output_root, transcribe=True, model_name="large-
     elif suffix in WORD_EXTENSIONS:
         artifacts.append(_extract_docx_text(source, output_dir, log))
     elif suffix in TEXT_EXTENSIONS:
-            # Try UTF-8 first, fall back to common Windows encodings
-            text = None
-            for encoding in ("utf-8", "cp1252", "cp1256", "latin-1"):
-                try:
-                    text = source.read_text(encoding=encoding)
-                    break
-                except UnicodeDecodeError:
-                    continue
-            if text is None:
-                text = source.read_text(encoding="utf-8", errors="replace")
-                log(f"Warning: {source.name} had encoding issues, used replacement characters")
-            output = _write_text(output_dir / f"{source.stem}_text{source.suffix.lower()}", text)
-            artifacts.append(output)
-            log(f"Copied text source: {output}")
+        # Try UTF-8 first, fall back to common Windows encodings
+        text: Optional[str] = None
+        for encoding in ("utf-8", "cp1252", "cp1256", "latin-1"):
+            try:
+                text = source.read_text(encoding=encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            text = source.read_text(encoding="utf-8", errors="replace")
+            log(f"Warning: {source.name} had encoding issues, used replacement characters")
+        output = _write_text(output_dir / f"{source.stem}_text{source.suffix.lower()}", text)
+        artifacts.append(output)
+        log(f"Copied text source: {output}")
     else:
         raise ValueError(f"Unsupported source type: {source.suffix or 'no extension'}")
 
@@ -226,11 +242,16 @@ def process_source(source_path, output_root, transcribe=True, model_name="large-
 
     # Write manifest for prompt generation
     _write_manifest(source, artifacts, output_dir, log)
-    
+
     return artifacts
 
 
-def _write_manifest(source, artifacts, output_dir, log=print):
+def _write_manifest(
+    source: Path,
+    artifacts: List[Path],
+    output_dir: Path,
+    log: Callable[[str], Any] = print,
+) -> None:
     """Write a JSON manifest of generated artifacts for prompt generation."""
     manifest_path = output_dir / f"{source.stem}_manifest.json"
     manifest = {
