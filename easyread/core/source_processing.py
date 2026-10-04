@@ -6,7 +6,7 @@ import time
 import threading
 from typing import Optional, List, Any, Callable
 
-from extract_audio import extract_audio_to_mp3
+from easyread.extractors import extract_audio_to_mp3
 
 
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".wma", ".ogg", ".opus", ".flac", ".mp4"}

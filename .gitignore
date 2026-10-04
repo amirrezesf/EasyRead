@@ -4,7 +4,7 @@ __pycache__/
 build/
 dist/
 wheels/
-*.egg-info
+*.egg-info/
 *.so
 *.dylib
 *.pyd
@@ -40,3 +40,6 @@ htmlcov/
 *.egg/
 *.egg-info/
 pip-wheel-metadata/
+
+# Local pycache directories
+**/__pycache__/

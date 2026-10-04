@@ -7,7 +7,7 @@ import pytest
 
 
 def test_normalize_whisper_language():
-    from source_processing import _normalize_whisper_language
+    from easyread.core.source_processing import _normalize_whisper_language
 
     assert _normalize_whisper_language(None) == "auto"
     assert _normalize_whisper_language("auto") == "auto"
@@ -21,7 +21,7 @@ def test_normalize_whisper_language():
 
 
 def test_safe_name():
-    from prompt_generation import _safe_name
+    from easyread.core.prompt_generation import _safe_name
 
     assert _safe_name("Study guide") == "study_guide"
     assert _safe_name("Night-before exam handout") == "night-before_exam_handout"
@@ -30,7 +30,7 @@ def test_safe_name():
 
 def test_source_processing_imports():
     """Verify all source_processing functions are importable."""
-    from source_processing import (
+    from easyread.core.source_processing import (
         process_source,
         transcribe_audio,
         _load_whisper_model,
@@ -50,7 +50,7 @@ def test_source_processing_imports():
 
 def test_prompt_generation_imports():
     """Verify all prompt_generation functions are importable."""
-    from prompt_generation import (
+    from easyread.core.prompt_generation import (
         build_prompt,
         write_prompt,
         PURPOSES,
@@ -71,27 +71,27 @@ def test_prompt_generation_imports():
 
 def test_pptx_converters_imports():
     """Verify PPTX converters are importable."""
-    from pptx_to_html import convert as html_convert
-    from pptx_to_markdown import convert as md_convert
+    from easyread.converters.pptx_to_html import convert as html_convert
+    from easyread.converters.pptx_to_markdown import convert as md_convert
     assert callable(html_convert)
     assert callable(md_convert)
 
 
 def test_extract_audio_imports():
     """Verify extract_audio functions are importable."""
-    from extract_audio import extract_audio_to_mp3
+    from easyread.extractors.extract_audio import extract_audio_to_mp3
     assert callable(extract_audio_to_mp3)
 
 
 def test_convert_emf_imports():
     """Verify convert_emf_and_wmf functions are importable."""
-    from convert_emf_and_wmf import vector_to_jpg
+    from easyread.extractors.convert_emf_and_wmf import vector_to_jpg
     assert callable(vector_to_jpg)
 
 
 def test_manifest_writing(tmp_path):
     """Test that _write_manifest creates valid JSON."""
-    from source_processing import _write_manifest
+    from easyread.core.source_processing import _write_manifest
 
     source = tmp_path / "test.pptx"
     source.write_text("dummy")
@@ -118,7 +118,7 @@ def test_manifest_writing(tmp_path):
 
 def test_prompt_purpose_structure():
     """Test that all purposes have required fields."""
-    from prompt_generation import PURPOSES
+    from easyread.core.prompt_generation import PURPOSES
 
     required_fields = {"role", "goal", "content_rules", "organization"}
     for purpose_name, config in PURPOSES.items():

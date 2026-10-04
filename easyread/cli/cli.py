@@ -4,8 +4,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from source_processing import process_source
-from prompt_generation import PURPOSES, write_prompt
+from easyread.core import process_source
+from easyread.core.prompt_generation import PURPOSES, write_prompt
 
 
 def _parse_args() -> argparse.Namespace:

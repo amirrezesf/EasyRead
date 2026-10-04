@@ -26,8 +26,8 @@ try:
 except ImportError:  # pragma: no cover
     TTKBOOTSTRAP_AVAILABLE = False
 
-from source_processing import process_source
-from prompt_generation import PURPOSES, write_prompt
+from easyread.core import process_source
+from easyread.core.prompt_generation import PURPOSES, write_prompt
 
 
 class Tooltip:

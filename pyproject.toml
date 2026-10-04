@@ -24,30 +24,16 @@ Homepage = "https://github.com/amirrezesf/EasyRead"
 Repository = "https://github.com/amirrezesf/EasyRead"
 
 [project.scripts]
-easyread = "cli:main"
-easyread-gui = "easyread_gui:main"
+easyread = "easyread.cli:cli_main"
+easyread-gui = "easyread.gui:gui_main"
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-py-modules = [
-    "cli",
-    "convert_emf_and_wmf",
-    "easyread_gui",
-    "extract_audio",
-    "main",
-    "pptx_to_html",
-    "pptx_to_markdown",
-    "prompt_generation",
-    "source_processing",
-    "test",
-]
-
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["*"]
+include = ["easyread*"]
 
 [tool.uv]
 dev-dependencies = [

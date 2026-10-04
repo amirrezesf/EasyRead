@@ -38,7 +38,7 @@ from typing import Callable, Optional, Any
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
-from convert_emf_and_wmf import vector_to_jpg
+from easyread.extractors import vector_to_jpg
 
 
 # ---------- formatting detection ----------
