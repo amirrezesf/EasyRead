@@ -68,13 +68,13 @@ def _run_to_markdown(run):
         return ""
     _, flags = _run_is_emphasized(run)
     if flags["highlight"]:
-        text = f"=={text}=="
+        text = f"**=={text}==**"  # bold + highlight marker for visibility
     elif flags["color"]:
-        text = f'<span style="color:#{flags["color"]}">{text}</span>'
+        text = f"**{text}**"  # bold for colored text (color not representable in standard MD)
     if flags["bold"]:
         text = f"**{text}**"
     if flags["underline"]:
-        text = f"<u>{text}</u>"
+        text = f"__{text}__"  # underline as double underscore
     return text
 
 
@@ -180,6 +180,12 @@ def _collect_shape_markdown(shape, slide_idx, img_counter, images_dir, md_out_di
             img_counter = _collect_shape_markdown(
                 sub, slide_idx, img_counter, images_dir, md_out_dir, pieces
             )
+        return img_counter
+
+    if getattr(shape, "has_table", False) and shape.has_table:
+        md = _table_to_markdown(shape.table)
+        if md:
+            pieces.append(md)
         return img_counter
 
     return img_counter

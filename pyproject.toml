@@ -27,6 +27,23 @@ Repository = "https://github.com/amirrezesf/EasyRead"
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+py-modules = [
+    "convert_emf_and_wmf",
+    "easyread_gui",
+    "extract_audio",
+    "main",
+    "pptx_to_html",
+    "pptx_to_markdown",
+    "prompt_generation",
+    "source_processing",
+    "test",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+
 [tool.uv]
 dev-dependencies = [
     "pytest>=8.0.0",

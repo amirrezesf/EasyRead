@@ -217,6 +217,8 @@ def _slide_to_html(slide, slide_idx, images_dir, html_out_dir):
                 if sub.shape_type == MSO_SHAPE_TYPE.PICTURE:
                     img_counter += 1
                     pieces.append(_picture_to_html(sub, slide_idx, img_counter, images_dir, html_out_dir))
+                elif getattr(sub, "has_table", False) and sub.has_table:
+                    pieces.append(_table_to_html(sub.table))
                 elif getattr(sub, "has_text_frame", False) and sub.has_text_frame:
                     html = _text_frame_to_html(sub.text_frame)
                     if html:
