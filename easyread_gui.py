@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import functools
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -477,7 +478,7 @@ class EasyReadApp(BaseClass):
                         self.log(errors[-1])
                     # Update progress
                     progress_pct = int((i / total) * 100)
-                    self.after(0, lambda p=progress_pct: self._progress_var.set(p))
+                    self.after(0, functools.partial(self._progress_var.set, progress_pct))
             finally:
                 self.after(0, lambda: self._finish(errors))
 
