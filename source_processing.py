@@ -1,7 +1,9 @@
 """Source extraction and Whisper transcription used by the EasyRead GUI."""
 
 from pathlib import Path
+import json
 import time
+import threading
 
 from extract_audio import extract_audio_to_mp3
 
@@ -12,7 +14,36 @@ WORD_EXTENSIONS = {".docx"}
 PDF_EXTENSIONS = {".pdf"}
 TEXT_EXTENSIONS = {".txt", ".md", ".html", ".htm"}
 _WHISPER_MODELS = {}
+_WHISPER_MODELS_LOCK = threading.Lock()
 _WHISPER_MODEL_ALIASES = {"large-v3-turbo": "turbo"}
+
+
+def _load_whisper_model(model_name: str, log=print):
+    """Thread-safe Whisper model loading with CPU fallback."""
+    with _WHISPER_MODELS_LOCK:
+        model = _WHISPER_MODELS.get(model_name)
+        if model is not None:
+            log(f"Using cached Whisper model: {model_name}")
+            return model
+
+    log(f"Loading selected Whisper model: {model_name}")
+    try:
+        import whisper
+    except ImportError as exc:
+        raise RuntimeError("Install openai-whisper to transcribe audio with Whisper.") from exc
+
+    # Try CUDA first, fall back to CPU
+    try:
+        model = whisper.load_model(model_name, device="cuda")
+        log(f"Whisper model loaded on CUDA: {model_name}")
+    except Exception as e:
+        log(f"CUDA not available ({e}), loading on CPU...")
+        model = whisper.load_model(model_name, device="cpu")
+        log(f"Whisper model loaded on CPU: {model_name}")
+
+    with _WHISPER_MODELS_LOCK:
+        _WHISPER_MODELS[model_name] = model
+    return model
 
 
 def _normalize_whisper_language(language):
@@ -74,10 +105,14 @@ def _extract_pdf(source, output_dir, log):
             lines.extend([f"## Page {page_number}", "", page, ""])
     artifacts = []
     pages_without_text = [index for index, page in enumerate(pages) if not page]
-    if any(pages):
+    has_some_text = any(pages)
+    all_blank = not has_some_text
+
+    if has_some_text:
         output = output_dir / f"{source.stem}_text.md"
         artifacts.append(_write_text(output, "\n".join(lines).rstrip() + "\n"))
         log(f"Extracted PDF Markdown: {output}")
+
     if pages_without_text:
         try:
             import fitz
@@ -92,33 +127,20 @@ def _extract_pdf(source, output_dir, log):
             page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False).save(image_path)
             artifacts.append(image_path)
             lines.extend([f"## Page {page_number}", "", f"![Page {page_number}]({image_dir.name}/{image_path.name})", ""])
-        if not any(pages):
+        if all_blank:
             output = output_dir / f"{source.stem}_text.md"
             artifacts.append(_write_text(output, "\n".join(lines).rstrip() + "\n"))
             log(f"Created scanned PDF Markdown with image references: {output}")
-        elif any(pages):
+        elif has_some_text:
             output.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         log(f"Rendered {len(pages_without_text)} PDF page image(s) without extractable text: {image_dir}")
     return artifacts
 
 
-def transcribe_audio(audio_path, output_path, model_name="large-v3-turbo", language="fa", log=print):
+def transcribe_audio(audio_path, output_path, model_name="large-v3-turbo", language="fa", log=print, cancel_event=None):
     """Transcribe an audio file with OpenAI Whisper and write plain text."""
-    try:
-        import whisper
-    except ImportError as exc:
-        raise RuntimeError("Install openai-whisper to transcribe audio with Whisper.") from exc
-
-    selected_model_name = model_name
-    whisper_model_name = _WHISPER_MODEL_ALIASES.get(selected_model_name, selected_model_name)
-    model = _WHISPER_MODELS.get(whisper_model_name)
-    if model is None:
-        log(f"Loading selected Whisper model: {selected_model_name}")
-        model = whisper.load_model(whisper_model_name, device="cuda")
-        _WHISPER_MODELS[whisper_model_name] = model
-        log(f"Whisper model ready: {selected_model_name}")
-    else:
-        log(f"Using cached Whisper model: {selected_model_name}")
+    whisper_model_name = _WHISPER_MODEL_ALIASES.get(model_name, model_name)
+    model = _load_whisper_model(whisper_model_name, log=log)
 
     whisper_language = _normalize_whisper_language(language)
     log(f"Transcription started: {Path(audio_path).name} (language={whisper_language})")
@@ -126,7 +148,15 @@ def transcribe_audio(audio_path, output_path, model_name="large-v3-turbo", langu
     transcribe_kwargs = {}
     if whisper_language != "auto":
         transcribe_kwargs["language"] = whisper_language
+    
+    # Whisper doesn't natively support cancellation, but we can check between segments
     result = model.transcribe(str(audio_path), **transcribe_kwargs)
+    
+    # Check for cancellation after transcription
+    if cancel_event and cancel_event.is_set():
+        log("Transcription cancelled")
+        return None
+    
     segments = result.get("segments", [])
     elapsed_seconds = time.perf_counter() - started_at
     lines = [segment.get("text", "").strip() for segment in segments if segment.get("text", "").strip()]
@@ -140,7 +170,7 @@ def transcribe_audio(audio_path, output_path, model_name="large-v3-turbo", langu
     return output
 
 
-def process_source(source_path, output_root, transcribe=True, model_name="large-v3-turbo", language="fa", log=print):
+def process_source(source_path, output_root, transcribe=True, model_name="large-v3-turbo", language="fa", log=print, cancel_event=None):
     """Process one source and return paths created for it."""
     source = Path(source_path)
     output_dir = Path(output_root)
@@ -153,7 +183,7 @@ def process_source(source_path, output_root, transcribe=True, model_name="large-
         artifacts.append(_extract_ppt_text(source, output_dir, log))
         combined_audio = output_dir / f"{source.stem}_audio.mp3"
         try:
-            extract_audio_to_mp3(source, combined_audio, log=log)
+            extract_audio_to_mp3(source, str(combined_audio), log=log)
             artifacts.append(combined_audio)
             audio_to_transcribe.append(combined_audio)
         except ValueError as exc:
@@ -166,14 +196,60 @@ def process_source(source_path, output_root, transcribe=True, model_name="large-
     elif suffix in WORD_EXTENSIONS:
         artifacts.append(_extract_docx_text(source, output_dir, log))
     elif suffix in TEXT_EXTENSIONS:
-        output = _write_text(output_dir / f"{source.stem}_text{source.suffix.lower()}", source.read_text(encoding="utf-8"))
-        artifacts.append(output)
-        log(f"Copied text source: {output}")
+            # Try UTF-8 first, fall back to common Windows encodings
+            text = None
+            for encoding in ("utf-8", "cp1252", "cp1256", "latin-1"):
+                try:
+                    text = source.read_text(encoding=encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if text is None:
+                text = source.read_text(encoding="utf-8", errors="replace")
+                log(f"Warning: {source.name} had encoding issues, used replacement characters")
+            output = _write_text(output_dir / f"{source.stem}_text{source.suffix.lower()}", text)
+            artifacts.append(output)
+            log(f"Copied text source: {output}")
     else:
         raise ValueError(f"Unsupported source type: {source.suffix or 'no extension'}")
 
     if transcribe:
         for audio_path in audio_to_transcribe:
+            # Check for cancellation before each transcription
+            if cancel_event and cancel_event.is_set():
+                log("Processing cancelled")
+                break
             transcript = output_dir / f"{audio_path.stem}_transcript.txt"
-            artifacts.append(transcribe_audio(audio_path, transcript, model_name=model_name, language=language, log=log))
+            result = transcribe_audio(audio_path, transcript, model_name=model_name, language=language, log=log, cancel_event=cancel_event)
+            if result:
+                artifacts.append(result)
+
+    # Write manifest for prompt generation
+    _write_manifest(source, artifacts, output_dir, log)
+    
     return artifacts
+
+
+def _write_manifest(source, artifacts, output_dir, log=print):
+    """Write a JSON manifest of generated artifacts for prompt generation."""
+    manifest_path = output_dir / f"{source.stem}_manifest.json"
+    manifest = {
+        "source": str(source),
+        "source_stem": source.stem,
+        "source_suffix": source.suffix,
+        "generated_at": time.time(),
+        "artifacts": [
+            {
+                "path": str(artifact),
+                "name": Path(artifact).name,
+                "type": Path(artifact).suffix.lower(),
+            }
+            for artifact in artifacts
+        ],
+    }
+    try:
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+        log(f"Manifest written: {manifest_path}")
+    except Exception as e:
+        log(f"Warning: Failed to write manifest: {e}")

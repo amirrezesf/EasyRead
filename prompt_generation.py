@@ -1,6 +1,8 @@
 """Build purpose-specific prompts from EasyRead extraction artifacts."""
 
 from pathlib import Path
+import json
+import glob
 
 
 # ---------------------------------------------------------------------------
@@ -251,8 +253,34 @@ def _safe_name(value):
     return "_".join(value.lower().split()).replace("/", "-")
 
 
-def _source_artifacts(source, output_root):
-    """Return extracted Markdown/TXT artifacts for one source in stable order."""
+def _source_artifacts_via_manifest(source, output_root):
+    """Return extracted artifacts using manifest files (preferred method)."""
+    source = Path(source)
+    output_dir = Path(output_root)
+
+    if not output_dir.exists():
+        return []
+
+    manifest_path = output_dir / f"{source.stem}_manifest.json"
+    if manifest_path.exists():
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            artifacts = []
+            for artifact_info in manifest.get("artifacts", []):
+                artifact_path = Path(artifact_info["path"])
+                if artifact_path.exists():
+                    artifacts.append(artifact_path)
+            if artifacts:
+                return sorted(artifacts, key=lambda p: p.name)
+        except Exception:
+            pass  # Fall back to legacy discovery
+
+    return []
+
+
+def _source_artifacts_legacy(source, output_root):
+    """Return extracted Markdown/TXT artifacts for one source in stable order (legacy)."""
     source = Path(source)
     output_dir = Path(output_root)
 
@@ -266,6 +294,14 @@ def _source_artifacts(source, output_root):
         and path.suffix.lower() in {".md", ".txt"}
         and path.name.startswith(f"{source.stem}_")
     )
+
+
+def _source_artifacts(source, output_root):
+    """Return extracted artifacts for one source (tries manifest first, falls back to legacy)."""
+    artifacts = _source_artifacts_via_manifest(source, output_root)
+    if artifacts:
+        return artifacts
+    return _source_artifacts_legacy(source, output_root)
 
 
 def _collect_artifact_names(sources, output_root):

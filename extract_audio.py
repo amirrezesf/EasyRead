@@ -2,6 +2,7 @@ import zipfile
 import subprocess
 import tempfile
 import re
+import shutil
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -184,35 +185,57 @@ def extract_audio_to_mp3(powerpoint_file, output_file="combined_audio.mp3", log=
                 f.write(f"file '{path}'\n")
 
         # Combine and convert to MP3
-        command = [
-            "ffmpeg",
-            "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", str(concat_file),
-            "-vn",
-            "-acodec", "libmp3lame",
-            "-b:a", "192k",
-            str(output_file)
-        ]
+                # Check ffmpeg availability first
+                ffmpeg_path = shutil.which("ffmpeg")
+                if not ffmpeg_path:
+                    raise RuntimeError(
+                        "FFmpeg not found in PATH. Install FFmpeg (https://ffmpeg.org/download.html) "
+                        "and ensure 'ffmpeg' is available on PATH. On Windows: winget install ffmpeg, "
+                        "on Linux: apt install ffmpeg, on macOS: brew install ffmpeg."
+                    )
+        
+                # Also check for libmp3lame encoder
+                probe_result = subprocess.run(
+                    [ffmpeg_path, "-encoders"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                if "libmp3lame" not in probe_result.stdout:
+                    raise RuntimeError(
+                        "FFmpeg found but 'libmp3lame' encoder is missing. "
+                        "Install a full FFmpeg build with MP3 encoding support."
+                    )
 
-        log("Combining audio...")
+                command = [
+                    ffmpeg_path,
+                    "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", str(concat_file),
+                    "-vn",
+                    "-acodec", "libmp3lame",
+                    "-b:a", "192k",
+                    str(output_file)
+                ]
 
-        run_kwargs = {
-            "stdout": subprocess.PIPE,
-            "stderr": subprocess.PIPE,
-            "text": True,
-        }
-        if hasattr(subprocess, "CREATE_NO_WINDOW"):
-            run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                log("Combining audio...")
 
-        result = subprocess.run(command, **run_kwargs)
+                run_kwargs = {
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.PIPE,
+                    "text": True,
+                }
+                if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                    run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-        if result.returncode != 0:
-            log(result.stderr)
-            raise RuntimeError("FFmpeg failed to create the MP3.")
+                result = subprocess.run(command, **run_kwargs)
 
-        log(f"Done! Output: {output_file.resolve()}")
+                if result.returncode != 0:
+                    log(result.stderr)
+                    raise RuntimeError("FFmpeg failed to create the MP3.")
+
+                log(f"Done! Output: {output_file.resolve()}")
 
 
 if __name__ == "__main__":

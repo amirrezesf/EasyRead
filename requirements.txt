@@ -1,6 +1,6 @@
-python-pptx
-python-docx
-pypdf
-PyMuPDF
-openai-whisper
-torch==2.11.0
+python-pptx>=1.0.0
+python-docx>=1.1.0
+pypdf>=4.0.0
+pymupdf>=1.23.0
+openai-whisper>=20231117
+torch>=2.1.0

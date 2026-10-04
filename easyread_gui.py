@@ -90,13 +90,16 @@ class EasyReadApp(BaseClass):
         self.prompt_purpose_var = tk.StringVar(value="Night-before exam handout")
         self.transcribe_var = tk.BooleanVar(value=True)
         self._busy = False
+        self._cancel_event = threading.Event()
         self._log_queue = queue.Queue()
         self._progress_var = tk.DoubleVar(value=0)
 
-        # Session file path (in user's app data directory)
-        self.session_file = Path(
-            Path(os.getenv("APPDATA", Path.home())) / "EasyRead" / "session.json"
-        )
+        # Session file path (in user's app data directory - XDG compliant)
+        if sys.platform == "win32":
+            base_dir = Path(os.getenv("APPDATA", Path.home()))
+        else:
+            base_dir = Path(os.getenv("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+        self.session_file = base_dir / "EasyRead" / "session.json"
         self.session_file.parent.mkdir(parents=True, exist_ok=True)
         self.session_artifacts_dir = self.session_file.parent / "extracted"
 
@@ -232,7 +235,12 @@ class EasyReadApp(BaseClass):
 
         # Run button
         self.run_btn = ttk.Button(frm, text="Run", command=self._on_run)
-        self.run_btn.grid(row=6, column=0, columnspan=3, pady=(8, 4))
+        self.run_btn.grid(row=6, column=0, columnspan=2, pady=(8, 4))
+        
+        # Cancel button (initially hidden)
+        self.cancel_btn = ttk.Button(frm, text="Cancel", command=self._on_cancel, state=tk.DISABLED)
+        self.cancel_btn.grid(row=6, column=2, pady=(8, 4))
+        self.cancel_btn.grid_remove()
 
         # Status
         self.status_var = tk.StringVar(value="Ready")
@@ -403,6 +411,9 @@ class EasyReadApp(BaseClass):
         if self._busy:
             return
 
+        # Reset cancellation event
+        self._cancel_event.clear()
+
         sources = list(self.sources)
         out_dir = self.output_dir_var.get().strip()
         transcribe = self.transcribe_var.get()
@@ -424,6 +435,8 @@ class EasyReadApp(BaseClass):
 
         self._busy = True
         self.run_btn.configure(state=tk.DISABLED)
+        self.cancel_btn.configure(state=tk.NORMAL)
+        self.cancel_btn.grid()
         self.status_var.set("Working…")
         self.log_text.configure(state=tk.NORMAL)
         self.log_text.delete("1.0", tk.END)
@@ -440,6 +453,11 @@ class EasyReadApp(BaseClass):
             try:
                 total = len(sources)
                 for i, source in enumerate(sources, start=1):
+                    # Check for cancellation
+                    if self._cancel_event.is_set():
+                        self.log("\n--- Cancelled by user ---")
+                        break
+                    
                     self.log(f"\n=== Processing {Path(source).name} ===")
                     try:
                         artifacts = process_source(
@@ -449,6 +467,7 @@ class EasyReadApp(BaseClass):
                             model_name,
                             language=language,
                             log=self.log,
+                            cancel_event=self._cancel_event,
                         )
                         for artifact in artifacts:
                             self.log(f"Created: {artifact}")
@@ -464,9 +483,19 @@ class EasyReadApp(BaseClass):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_cancel(self):
+        """Signal the worker thread to stop."""
+        if self._busy:
+            self._cancel_event.set()
+            self.log("Cancellation requested...")
+            self.cancel_btn.configure(state=tk.DISABLED)
+            self.status_var.set("Cancelling...")
+
     def _finish(self, errors):
         self._busy = False
         self.run_btn.configure(state=tk.NORMAL)
+        self.cancel_btn.configure(state=tk.DISABLED)
+        self.cancel_btn.grid_remove()
         self.progress.grid_remove()  # hide progress bar
         if errors:
             self.status_var.set("Finished with errors")

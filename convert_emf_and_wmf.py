@@ -7,6 +7,51 @@ import sys
 from pathlib import Path
 
 
+def _find_executable(names, windows_paths=None):
+    """Find an executable in PATH or common Windows install locations."""
+    for name in names:
+        p = shutil.which(name)
+        if p:
+            return p
+    if sys.platform.startswith("win") and windows_paths:
+        for path in windows_paths:
+            candidate = Path(path)
+            if candidate.exists():
+                return str(candidate)
+    return None
+
+
+def _find_soffice():
+    """Find LibreOffice/soffice executable."""
+    return _find_executable(
+        ["libreoffice", "soffice"],
+        windows_paths=[
+            Path(os.environ.get("PROGRAMFILES", "")) / "LibreOffice" / "program" / "soffice.exe",
+            Path(os.environ.get("PROGRAMFILES(X86)", "")) / "LibreOffice" / "program" / "soffice.exe",
+            Path(r"C:\Program Files\LibreOffice\program\soffice.exe"),
+            Path(r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"),
+        ],
+    )
+
+
+def _find_imagemagick():
+    """Find ImageMagick convert/magick executable."""
+    return _find_executable(
+        ["magick", "convert"],
+        windows_paths=[
+            Path(os.environ.get("PROGRAMFILES", "")) / "ImageMagick*" / "magick.exe",
+            Path(os.environ.get("PROGRAMFILES", "")) / "ImageMagick*" / "convert.exe",
+            Path(r"C:\Program Files\ImageMagick*\magick.exe"),
+            Path(r"C:\Program Files\ImageMagick*\convert.exe"),
+        ],
+    )
+
+
+def _find_unoconv():
+    """Find unoconv executable (uses LibreOffice headless)."""
+    return _find_executable(["unoconv"])
+
+
 def vector_to_jpg(vector_path, output_path=None, dpi=300):
     vector_path = Path(vector_path)
 
@@ -18,55 +63,97 @@ def vector_to_jpg(vector_path, output_path=None, dpi=300):
     else:
         output_path = Path(output_path)
 
-    # Convert the vector image to PDF using LibreOffice
-    pdf_path = vector_path.with_suffix(".pdf")
+    # Try LibreOffice first (best for EMF/WMF)
+    soffice = _find_soffice()
+    if soffice:
+        try:
+            pdf_path = vector_path.with_suffix(".pdf")
+            subprocess.run(
+                [
+                    str(soffice),
+                    "--headless",
+                    "--convert-to", "pdf",
+                    "--outdir", str(vector_path.parent),
+                    str(vector_path)
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
 
-    def find_soffice_executable():
-        # Prefer executables on PATH first
-        for name in ("libreoffice", "soffice"):
-            p = shutil.which(name)
-            if p:
-                return p
+            # Convert PDF page to JPG using PyMuPDF
+            import fitz
 
-        # Common Windows install locations
-        if sys.platform.startswith("win"):
-            possible_roots = [os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"), r"C:\Program Files", r"C:\Program Files (x86)"]
-            for root in filter(None, possible_roots):
-                candidate = Path(root) / "LibreOffice" / "program" / "soffice.exe"
-                if candidate.exists():
-                    return str(candidate)
+            doc = fitz.open(pdf_path)
+            page = doc[0]
 
-        return None
+            zoom = dpi / 72
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
 
-    soffice = find_soffice_executable()
-    if not soffice:
-        raise FileNotFoundError(
-            "LibreOffice (soffice) not found. Install LibreOffice and add it to PATH,\n"
-            "or set the PROGRAMFILES environment variable so the script can locate it.\n"
-            "Windows users: check 'C:\\Program Files\\LibreOffice\\program\\soffice.exe'.\n"
-            "Alternatively, install ImageMagick or another tool that can convert EMF/WMF to PDF/JPG."
-        )
+            pix.save(str(output_path))
 
-    subprocess.run([
-        str(soffice),
-        "--headless",
-        "--convert-to", "pdf",
-        "--outdir", str(vector_path.parent),
-        str(vector_path)
-    ], check=True)
+            doc.close()
+            pdf_path.unlink(missing_ok=True)
+            return
+        except subprocess.CalledProcessError as e:
+            print(f"LibreOffice conversion failed: {e.stderr}", file=sys.stderr)
+        except Exception as e:
+            print(f"LibreOffice path failed: {e}", file=sys.stderr)
 
-    # Convert PDF page to JPG using PyMuPDF
-    import fitz
+    # Fallback: ImageMagick
+    magick = _find_imagemagick()
+    if magick:
+        try:
+            subprocess.run(
+                [
+                    str(magick),
+                    str(vector_path),
+                    "-density", str(dpi),
+                    "-background", "white",
+                    "-alpha", "remove",
+                    "-alpha", "off",
+                    str(output_path)
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return
+        except subprocess.CalledProcessError as e:
+            print(f"ImageMagick conversion failed: {e.stderr}", file=sys.stderr)
+        except Exception as e:
+            print(f"ImageMagick path failed: {e}", file=sys.stderr)
 
-    doc = fitz.open(pdf_path)
-    page = doc[0]
+    # Fallback: unoconv
+    unoconv = _find_unoconv()
+    if unoconv:
+        try:
+            pdf_path = vector_path.with_suffix(".pdf")
+            subprocess.run(
+                [str(unoconv), "-f", "pdf", "-o", str(pdf_path), str(vector_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
 
-    zoom = dpi / 72
-    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            import fitz
+            doc = fitz.open(pdf_path)
+            page = doc[0]
+            zoom = dpi / 72
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            pix.save(str(output_path))
+            doc.close()
+            pdf_path.unlink(missing_ok=True)
+            return
+        except Exception as e:
+            print(f"unoconv path failed: {e}", file=sys.stderr)
 
-    pix.save(str(output_path))
-
-    doc.close()
-
-    # Remove temporary PDF
-    pdf_path.unlink(missing_ok=True)
+    raise FileNotFoundError(
+        "No suitable converter found for EMF/WMF. Install one of:\n"
+        "  - LibreOffice (soffice) - recommended\n"
+        "  - ImageMagick (magick/convert)\n"
+        "  - unoconv (requires LibreOffice)\n"
+        "On Windows: winget install TheDocumentFoundation.LibreOffice\n"
+        "On Linux: apt install libreoffice imagemagick\n"
+        "On macOS: brew install --cask libreoffice imagemagick"
+    )
