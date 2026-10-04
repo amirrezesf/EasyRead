@@ -23,12 +23,17 @@ gui = [
 Homepage = "https://github.com/amirrezesf/EasyRead"
 Repository = "https://github.com/amirrezesf/EasyRead"
 
+[project.scripts]
+easyread = "cli:main"
+easyread-gui = "easyread_gui:main"
+
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = [
+    "cli",
     "convert_emf_and_wmf",
     "easyread_gui",
     "extract_audio",

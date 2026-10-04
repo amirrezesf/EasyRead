@@ -11,6 +11,7 @@ import functools
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from typing import Any, Callable, Optional
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -84,15 +85,15 @@ class EasyReadApp(BaseClass):
             self.style = tb.Style()
             self.style.theme_use('flatly')  # you can change the theme as needed
 
-        self.sources = []
+        self.sources: list[str] = []
         self.output_dir_var = tk.StringVar()
         self.model_var = tk.StringVar(value="large-v3-turbo")
         self.language_var = tk.StringVar(value="Persian")
         self.prompt_purpose_var = tk.StringVar(value="Night-before exam handout")
         self.transcribe_var = tk.BooleanVar(value=True)
-        self._busy = False
+        self._busy: bool = False
         self._cancel_event = threading.Event()
-        self._log_queue = queue.Queue()
+        self._log_queue: queue.Queue[str] = queue.Queue()
         self._progress_var = tk.DoubleVar(value=0)
 
         # Session file path (in user's app data directory - XDG compliant)
@@ -356,7 +357,7 @@ class EasyReadApp(BaseClass):
     def _create_prompt(self):
         if self._busy:
             return
-        sources = list(self.sources)
+        sources = [Path(s) for s in self.sources]
         out_dir = self.output_dir_var.get().strip()
         if not sources:
             messagebox.showwarning("Missing sources", "Please add and process source files first.")
@@ -409,80 +410,81 @@ class EasyReadApp(BaseClass):
         self.after(100, self._drain_log_queue)
 
     def _on_run(self):
-        if self._busy:
-            return
+            if self._busy:
+                return
 
-        # Reset cancellation event
-        self._cancel_event.clear()
+            # Reset cancellation event
+            self._cancel_event.clear()
 
-        sources = list(self.sources)
-        out_dir = self.output_dir_var.get().strip()
-        transcribe = self.transcribe_var.get()
-        model_name = self.model_var.get().strip() or "large-v3-turbo"
-        language = self.language_var.get().strip() or "Persian"
+            sources = [Path(s) for s in self.sources]
+            out_dir = self.output_dir_var.get().strip()
+            transcribe = self.transcribe_var.get()
+            model_name = self.model_var.get().strip() or "large-v3-turbo"
+            language = self.language_var.get().strip() or "Persian"
 
-        if not sources:
-            messagebox.showwarning("Missing sources", "Please add at least one source file.")
-            return
-        missing = [path for path in sources if not Path(path).is_file()]
-        if missing:
-            messagebox.showerror("File not found", "Source file does not exist:\n" + "\n".join(missing))
-            return
-        if not out_dir:
-            out_dir = str(Path(sources[0]).parent)
-            self.output_dir_var.set(out_dir)
+            if not sources:
+                messagebox.showwarning("Missing sources", "Please add at least one source file.")
+                return
+            missing = [path for path in sources if not path.is_file()]
+            if missing:
+                messagebox.showerror("File not found", "Source file does not exist:\n" + "\n".join(str(m) for m in missing))
+                return
+            if not out_dir:
+                out_dir = str(sources[0].parent)
+                self.output_dir_var.set(out_dir)
 
-        Path(out_dir).mkdir(parents=True, exist_ok=True)
+            out_dir_path = Path(out_dir)
+            out_dir_path.mkdir(parents=True, exist_ok=True)
 
-        self._busy = True
-        self.run_btn.configure(state=tk.DISABLED)
-        self.cancel_btn.configure(state=tk.NORMAL)
-        self.cancel_btn.grid()
-        self.status_var.set("Working…")
-        self.log_text.configure(state=tk.NORMAL)
-        self.log_text.delete("1.0", tk.END)
-        self.log_text.configure(state=tk.DISABLED)
-        self.log(f"Sources: {len(sources)}")
-        self.log(f"Output folder: {out_dir}")
+            self._busy = True
+            self.run_btn.configure(state=tk.DISABLED)
+            self.cancel_btn.configure(state=tk.NORMAL)
+            self.cancel_btn.grid()
+            self.status_var.set("Working…")
+            self.log_text.configure(state=tk.NORMAL)
+            self.log_text.delete("1.0", tk.END)
+            self.log_text.configure(state=tk.DISABLED)
+            self.log(f"Sources: {len(sources)}")
+            self.log(f"Output folder: {out_dir}")
 
-        # Show progress bar
-        self.progress.grid()
-        self._progress_var.set(0)
+            # Show progress bar
+            self.progress.grid()
+            self._progress_var.set(0)
 
-        def worker():
-            errors = []
-            try:
-                total = len(sources)
-                for i, source in enumerate(sources, start=1):
-                    # Check for cancellation
-                    if self._cancel_event.is_set():
-                        self.log("\n--- Cancelled by user ---")
-                        break
-                    
-                    self.log(f"\n=== Processing {Path(source).name} ===")
-                    try:
-                        artifacts = process_source(
-                            source,
-                            out_dir,
-                            transcribe,
-                            model_name,
-                            language=language,
-                            log=self.log,
-                            cancel_event=self._cancel_event,
-                        )
-                        for artifact in artifacts:
-                            self.log(f"Created: {artifact}")
-                        self._save_artifacts_to_session(source, out_dir, artifacts)
-                    except Exception as exc:
-                        errors.append(f"{Path(source).name}: {exc}")
-                        self.log(errors[-1])
-                    # Update progress
-                    progress_pct = int((i / total) * 100)
-                    self.after(0, functools.partial(self._progress_var.set, progress_pct))
-            finally:
-                self.after(0, lambda: self._finish(errors))
+            def worker():
+                errors = []
+                try:
+                    total = len(sources)
+                    for i, source in enumerate(sources, start=1):
+                        # Check for cancellation
+                        if self._cancel_event.is_set():
+                            self.log("\n--- Cancelled by user ---")
+                            break
 
-        threading.Thread(target=worker, daemon=True).start()
+                        self.log(f"\n=== Processing {source.name} ===")
+                        try:
+                            artifacts = process_source(
+                                source,
+                                out_dir_path,
+                                transcribe,
+                                model_name,
+                                language=language,
+                                log=self.log,
+                                cancel_event=self._cancel_event,
+                            )
+                            for artifact in artifacts:
+                                self.log(f"Created: {artifact}")
+                            self._save_artifacts_to_session(source, out_dir, artifacts)
+                        except Exception as exc:
+                            errors.append(f"{source.name}: {exc}")
+                            self.log(errors[-1])
+                        # Update progress
+                        progress_pct = int((i / total) * 100)
+                        self.after(0, functools.partial(self._progress_var.set, progress_pct))
+                finally:
+                    self.after(0, lambda: self._finish(errors))
+
+            threading.Thread(target=worker, daemon=True).start()
 
     def _on_cancel(self):
         """Signal the worker thread to stop."""

@@ -1,13 +1,20 @@
+"""Convert EMF/WMF vector images to JPG using available system tools.
 
+Supports LibreOffice (soffice), ImageMagick (magick/convert), and unoconv
+as fallback converters. Best results with LibreOffice.
+"""
 
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 
-def _find_executable(names, windows_paths=None):
+def _find_executable(
+    names: list[str], windows_paths: Optional[list[Path]] = None
+) -> Optional[str]:
     """Find an executable in PATH or common Windows install locations."""
     for name in names:
         p = shutil.which(name)
@@ -21,7 +28,7 @@ def _find_executable(names, windows_paths=None):
     return None
 
 
-def _find_soffice():
+def _find_soffice() -> Optional[str]:
     """Find LibreOffice/soffice executable."""
     return _find_executable(
         ["libreoffice", "soffice"],
@@ -34,7 +41,7 @@ def _find_soffice():
     )
 
 
-def _find_imagemagick():
+def _find_imagemagick() -> Optional[str]:
     """Find ImageMagick convert/magick executable."""
     return _find_executable(
         ["magick", "convert"],
@@ -47,12 +54,12 @@ def _find_imagemagick():
     )
 
 
-def _find_unoconv():
+def _find_unoconv() -> Optional[str]:
     """Find unoconv executable (uses LibreOffice headless)."""
     return _find_executable(["unoconv"])
 
 
-def vector_to_jpg(vector_path, output_path=None, dpi=300):
+def vector_to_jpg(vector_path: str | Path, output_path: Optional[str | Path] = None, dpi: int = 300) -> None:
     vector_path = Path(vector_path)
 
     if vector_path.suffix.lower() not in {".emf", ".wmf"}:
@@ -141,6 +148,7 @@ def vector_to_jpg(vector_path, output_path=None, dpi=300):
             page = doc[0]
             zoom = dpi / 72
             pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+
             pix.save(str(output_path))
             doc.close()
             pdf_path.unlink(missing_ok=True)

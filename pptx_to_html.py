@@ -1,7 +1,4 @@
-"""
-pptx_to_html.py
-
-Extract a .pptx deck into a single HTML file that preserves formatting cues
+"""Extract a .pptx deck into a single HTML file that preserves formatting cues
 (bold / underline / font color / highlight) as semantic emphasis markup, and
 extracts embedded images to a folder with <img> references placed at their
 approximate position in reading order.
@@ -13,10 +10,11 @@ Design notes / limitations (read before wiring this into your app):
 
 1. "Reading order" on a slide is a heuristic. PPTX shapes have no native
    document order — only a z-order (creation order) and (x, y) coordinates.
-   This script sorts shapes by (top, left), which matches simple lecture
-   slides (title, then stacked bullets/images) but will misorder anything
-   with side-by-side columns or free-form layouts. Spot check a few slides
-   before trusting it on your whole deck.
+   This script sorts shapes by a column-aware heuristic: shapes are clustered
+   into vertical columns by their horizontal centers, then sorted top-to-bottom
+   within each column, columns processed left-to-right. This handles simple
+   multi-column layouts better than naive (top, left) but is still a heuristic.
+   Spot check a few slides before trusting it on your whole deck.
 
 2. "Important" formatting is inferred from bold / underline / font color /
    highlight. This is only as reliable as the professor's own habits — if
@@ -41,6 +39,8 @@ import argparse
 import os
 import sys
 from html import escape
+from pathlib import Path
+from typing import Callable, Optional
 
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -51,7 +51,7 @@ from convert_emf_and_wmf import vector_to_jpg
 
 # ---------- formatting detection ----------
 
-def _run_highlight_rgb(run):
+def _run_highlight_rgb(run) -> Optional[str]:
     """python-pptx has no public API for <a:highlight> (text highlight color).
     Reach into the underlying XML for it."""
     r = run._r
@@ -62,7 +62,7 @@ def _run_highlight_rgb(run):
     return None
 
 
-def _run_font_rgb(run):
+def _run_font_rgb(run) -> Optional[str]:
     try:
         color = run.font.color
         if color is not None and color.type is not None and color.rgb is not None:
@@ -72,7 +72,7 @@ def _run_font_rgb(run):
     return None
 
 
-def _run_is_emphasized(run):
+def _run_is_emphasized(run) -> tuple[bool, dict[str, Optional[bool | str]]]:
     """Bold, underline, an explicit font color, or a highlight all count as
     an 'this looks important' signal."""
     bold = bool(run.font.bold)
@@ -90,7 +90,7 @@ def _run_is_emphasized(run):
     }
 
 
-def _run_to_html(run):
+def _run_to_html(run) -> str:
     text = escape(run.text)
     if not text:
         return ""
@@ -106,7 +106,7 @@ def _run_to_html(run):
     return text
 
 
-def _paragraph_to_html(paragraph):
+def _paragraph_to_html(paragraph) -> Optional[tuple[int, str]]:
     runs_html = "".join(_run_to_html(r) for r in paragraph.runs)
     if not runs_html.strip():
         return None
@@ -116,7 +116,7 @@ def _paragraph_to_html(paragraph):
 
 # ---------- shape handlers ----------
 
-def _text_frame_to_html(text_frame):
+def _text_frame_to_html(text_frame) -> str:
     parts = []
     list_stack = []  # track open <ul> nesting by level
 
@@ -148,18 +148,30 @@ def _text_frame_to_html(text_frame):
     return "".join(parts) if any_list else ""
 
 
-def _table_to_html(table):
+def _table_to_html(table) -> str:
     rows_html = []
     for row in table.rows:
         cells_html = []
         for cell in row.cells:
-            cell_html = _text_frame_to_html(cell.text_frame).replace("<ul>", "").replace("</ul>", "").replace("<li>", "").replace("</li>", " ")
+            cell_html = (
+                _text_frame_to_html(cell.text_frame)
+                .replace("<ul>", "")
+                .replace("</ul>", "")
+                .replace("<li>", "")
+                .replace("</li>", " ")
+            )
             cells_html.append(f"<td>{cell_html.strip()}</td>")
         rows_html.append(f"<tr>{''.join(cells_html)}</tr>")
     return f"<table border='1' cellspacing='0' cellpadding='4'>{''.join(rows_html)}</table>"
 
 
-def _picture_to_html(shape, slide_idx, img_counter, images_dir, html_out_dir):
+def _picture_to_html(
+    shape,
+    slide_idx: int,
+    img_counter: int,
+    images_dir: str,
+    html_out_dir: str,
+) -> str:
     image = shape.image
     ext = image.ext.lower()
     filename = f"slide{slide_idx}_img{img_counter}.{ext}"
@@ -177,23 +189,102 @@ def _picture_to_html(shape, slide_idx, img_counter, images_dir, html_out_dir):
         f'<figure class="slide-image">'
         f'<img src="{rel_path}" alt="[TODO: caption slide {slide_idx} image {img_counter} — '
         f'not auto-generated, see script docstring]">'
-        f'</figure>'
+        f"</figure>"
     )
+
+
+# ---------- column-aware reading order ----------
+
+def _shape_center_x(shape) -> float:
+    """Return the horizontal center of a shape in EMU."""
+    left = shape.left if shape.left is not None else 0
+    width = shape.width if shape.width is not None else 0
+    return left + width / 2
+
+
+def _shape_top(shape) -> int:
+    """Return the top position of a shape in EMU."""
+    return shape.top if shape.top is not None else 0
+
+
+def _cluster_into_columns(
+    shapes: list,
+    column_threshold_emu: int = 914400,  # ~1 inch in EMU
+) -> list[list]:
+    """
+    Cluster shapes into vertical columns by horizontal centers.
+    
+    Shapes whose horizontal centers are within `column_threshold_emu` of each other
+    are placed in the same column. Columns are then ordered left-to-right by their
+    median center x. Within each column, shapes are sorted top-to-bottom.
+    
+    This handles simple multi-column layouts (e.g., two columns of bullets) much
+    better than a pure (top, left) sort, which would interleave the columns.
+    """
+    if not shapes:
+        return []
+    
+    # Compute center x for each shape
+    shapes_with_center = [(s, _shape_center_x(s)) for s in shapes]
+    
+    # Sort by center x to form initial column groups
+    shapes_with_center.sort(key=lambda x: x[1])
+    
+    columns = []
+    current_column = []
+    current_column_centers = []
+    
+    for shape, cx in shapes_with_center:
+        if not current_column:
+            current_column.append(shape)
+            current_column_centers.append(cx)
+        else:
+            # Check if this shape belongs to the current column
+            median_cx = sorted(current_column_centers)[len(current_column_centers) // 2]
+            if abs(cx - median_cx) <= column_threshold_emu:
+                current_column.append(shape)
+                current_column_centers.append(cx)
+            else:
+                # Start new column
+                columns.append(current_column)
+                current_column = [shape]
+                current_column_centers = [cx]
+    
+    if current_column:
+        columns.append(current_column)
+    
+    # Sort shapes within each column by top position
+    for column in columns:
+        column.sort(key=_shape_top)
+    
+    # Columns are already left-to-right by construction
+    return columns
+
+
+def _get_ordered_shapes(slide) -> list:
+    """
+    Return shapes in reading order using column-aware clustering.
+    """
+    shapes = list(slide.shapes)
+    columns = _cluster_into_columns(shapes)
+    ordered = []
+    for column in columns:
+        ordered.extend(column)
+    return ordered
 
 
 # ---------- slide / deck assembly ----------
 
-def _shape_sort_key(shape):
-    top = shape.top if shape.top is not None else 0
-    left = shape.left if shape.left is not None else 0
-    return (top, left)
-
-
-def _slide_to_html(slide, slide_idx, images_dir, html_out_dir):
+def _slide_to_html(
+    slide,
+    slide_idx: int,
+    images_dir: str,
+    html_out_dir: str,
+) -> str:
     pieces = [f'<section class="slide" data-slide="{slide_idx}">', f"<h2>Slide {slide_idx}</h2>"]
     img_counter = 0
 
-    shapes = sorted(slide.shapes, key=_shape_sort_key)
+    shapes = _get_ordered_shapes(slide)
 
     for shape in shapes:
         if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
@@ -213,31 +304,42 @@ def _slide_to_html(slide, slide_idx, images_dir, html_out_dir):
 
         if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
             # Recurse into grouped shapes (common for diagrams built from boxes/lines)
-            for sub in sorted(shape.shapes, key=_shape_sort_key):
-                if sub.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                    img_counter += 1
-                    pieces.append(_picture_to_html(sub, slide_idx, img_counter, images_dir, html_out_dir))
-                elif getattr(sub, "has_table", False) and sub.has_table:
-                    pieces.append(_table_to_html(sub.table))
-                elif getattr(sub, "has_text_frame", False) and sub.has_text_frame:
-                    html = _text_frame_to_html(sub.text_frame)
-                    if html:
-                        pieces.append(html)
+            # Use same column-aware ordering for sub-shapes
+            group_shapes = list(shape.shapes)
+            group_ordered = _cluster_into_columns(group_shapes)
+            for sub_group in group_ordered:
+                for sub in sub_group:
+                    if sub.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                        img_counter += 1
+                        pieces.append(_picture_to_html(sub, slide_idx, img_counter, images_dir, html_out_dir))
+                    elif getattr(sub, "has_table", False) and sub.has_table:
+                        pieces.append(_table_to_html(sub.table))
+                    elif getattr(sub, "has_text_frame", False) and sub.has_text_frame:
+                        html = _text_frame_to_html(sub.text_frame)
+                        if html:
+                            pieces.append(html)
 
     pieces.append("</section>")
     return "\n".join(pieces)
 
 
-def convert(pptx_path, html_path, images_dir=None):
+def convert(
+    pptx_path: str | Path,
+    html_path: str | Path,
+    images_dir: Optional[str | Path] = None,
+) -> tuple[Path, Path]:
     prs = Presentation(pptx_path)
-    html_out_dir = os.path.dirname(os.path.abspath(html_path)) or "."
+    html_path = Path(html_path)
+    html_out_dir = html_path.parent or Path(".")
     if images_dir is None:
-        images_dir = os.path.join(html_out_dir, "images")
+        images_dir = html_out_dir / "images"
+    else:
+        images_dir = Path(images_dir)
     os.makedirs(images_dir, exist_ok=True)
 
     slides_html = []
     for i, slide in enumerate(prs.slides, start=1):
-        slides_html.append(_slide_to_html(slide, i, images_dir, html_out_dir))
+        slides_html.append(_slide_to_html(slide, i, str(images_dir), str(html_out_dir)))
 
     doc = f"""<!DOCTYPE html>
 <html lang="fa">
@@ -262,11 +364,11 @@ def convert(pptx_path, html_path, images_dir=None):
     return html_path, images_dir
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("pptx_path")
-    ap.add_argument("html_path")
-    ap.add_argument("--images-dir", default=None, help="Defaults to <html_dir>/images")
+    ap.add_argument("pptx_path", type=Path)
+    ap.add_argument("html_path", type=Path)
+    ap.add_argument("--images-dir", type=Path, default=None, help="Defaults to <html_dir>/images")
     args = ap.parse_args()
 
     html_path, images_dir = convert(args.pptx_path, args.html_path, args.images_dir)
