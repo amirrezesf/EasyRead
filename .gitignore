@@ -5,10 +5,38 @@ build/
 dist/
 wheels/
 *.egg-info
+*.so
+*.dylib
+*.pyd
 
 # Virtual environments
-.venv
+.venv/
 venv/
 .idea/
 .idea
 .claude/
+
+# uv
+uv.lock
+
+# IDE / editor
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Distribution / packaging
+*.egg/
+*.egg-info/
+pip-wheel-metadata/
